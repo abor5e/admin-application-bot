@@ -1,4 +1,10 @@
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionFlagsBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const {
+    Client, GatewayIntentBits, Partials,
+    EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder,
+    ButtonBuilder, ButtonStyle, ModalBuilder,
+    TextInputBuilder, TextInputStyle, PermissionFlagsBits,
+    REST, Routes, SlashCommandBuilder, AttachmentBuilder
+} = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
@@ -42,7 +48,7 @@ const QUESTIONS = [
 const commands = [
     new SlashCommandBuilder()
         .setName('setup-apply')
-        .setDescription('إنشاء embed التقديم في هذه القناة')
+        .setDescription('إنشاء صورة التقديم في هذه القناة')
         .setDefaultMemberPermissions(8),
     new SlashCommandBuilder()
         .setName('setup-admin')
@@ -66,19 +72,14 @@ const commands = [
 async function registerCommands() {
     const token = process.env.DISCORD_TOKEN;
     const clientId = process.env.CLIENT_ID;
-
     if (!token || !clientId) {
-        console.error('❌ DISCORD_TOKEN أو CLIENT_ID غير موجود في متغيرات البيئة!');
+        console.error('❌ DISCORD_TOKEN أو CLIENT_ID غير موجود!');
         return;
     }
-
     try {
         const rest = new REST({ version: '10' }).setToken(token);
         console.log('⏳ جاري تسجيل الأوامر...');
-        await rest.put(
-            Routes.applicationCommands(clientId),
-            { body: commands.map(c => c.toJSON()) }
-        );
+        await rest.put(Routes.applicationCommands(clientId), { body: commands.map(c => c.toJSON()) });
         console.log('✅ تم تسجيل الأوامر بنجاح!');
     } catch (error) {
         console.error('❌ فشل تسجيل الأوامر:', error.message);
@@ -100,8 +101,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isStringSelectMenu() && interaction.customId === 'select_section') {
-        const section = interaction.values[0];
-        await showApplicationModal(interaction, section);
+        await showApplicationModal(interaction, interaction.values[0]);
         return;
     }
 
@@ -126,17 +126,13 @@ async function handleCommands(interaction, config) {
     const { commandName } = interaction;
 
     if (commandName === 'setup-apply') {
-        const embed = new EmbedBuilder()
-            .setTitle('📋 تقديم لفريق الإدارة')
-            .setDescription('مرحباً بك في نظام التقديم لفريق الإدارة!\n\nاختر القسم الذي تريد التقديم فيه من القائمة أدناه، ثم أجب على الأسئلة.')
-            .setColor(0x5865F2)
-            .addFields(
-                { name: '🎉 قسم الإيفنتات', value: 'مسؤول عن تنظيم وإدارة الفعاليات', inline: true },
-                { name: '🛡️ قسم الدعم', value: 'مسؤول عن مساعدة الأعضاء وحل مشاكلهم', inline: true },
-                { name: '🎮 قسم الألعاب', value: 'مسؤول عن تنظيم مسابقات وأنشطة الألعاب', inline: true }
-            )
-            .setFooter({ text: 'تأكد من قراءة شروط الإدارة قبل التقديم' })
-            .setTimestamp();
+        const imagePath = path.join(__dirname, 'apply.jpg');
+
+        if (!fs.existsSync(imagePath)) {
+            return interaction.reply({ content: '❌ ملف الصورة `apply.jpg` غير موجود في مجلد البوت.', ephemeral: true });
+        }
+
+        const attachment = new AttachmentBuilder(imagePath, { name: 'apply.jpg' });
 
         const row = new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
@@ -149,18 +145,18 @@ async function handleCommands(interaction, config) {
                 ])
         );
 
-        await interaction.channel.send({ embeds: [embed], components: [row] });
+        await interaction.channel.send({ files: [attachment], components: [row] });
 
         const newConfig = { ...config, applicationChannelId: interaction.channelId, guildId: interaction.guildId };
         saveConfig(newConfig);
 
-        await interaction.reply({ content: '✅ تم إنشاء روم التقديم في هذه القناة!', ephemeral: true });
+        await interaction.reply({ content: '✅ تم إرسال صورة التقديم مع الخيارات!', ephemeral: true });
     }
 
     else if (commandName === 'setup-admin') {
         const newConfig = { ...config, adminChannelId: interaction.channelId, guildId: interaction.guildId };
         saveConfig(newConfig);
-        await interaction.reply({ content: `✅ تم تعيين هذه القناة كروم الأدمن! جميع التقديمات ستُعرض هنا.`, ephemeral: true });
+        await interaction.reply({ content: '✅ تم تعيين هذه القناة كروم الأدمن!', ephemeral: true });
     }
 
     else if (commandName === 'setup-role') {
@@ -291,7 +287,6 @@ async function handleAdminDecision(interaction, config) {
         const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
             .setColor(0x57F287)
             .setFooter({ text: `✅ تم القبول بواسطة ${interaction.user.tag}` });
-
         await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
 
     } else if (action === 'reject') {
@@ -306,7 +301,6 @@ async function handleAdminDecision(interaction, config) {
         const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
             .setColor(0xED4245)
             .setFooter({ text: `❌ تم الرفض بواسطة ${interaction.user.tag}` });
-
         await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
     }
 }
