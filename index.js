@@ -21,15 +21,25 @@ const client = new Client({
 
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 
-function loadConfig() {
-    if (!fs.existsSync(CONFIG_FILE)) {
-        return { applicationChannelId: null, adminChannelId: null, staffRoleId: null, guildId: null };
+// Per-guild config structure: { guildId: { applicationChannelId, adminChannelId, staffRoleId } }
+function loadAllConfigs() {
+    if (!fs.existsSync(CONFIG_FILE)) return {};
+    try {
+        return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    } catch {
+        return {};
     }
-    return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
 }
 
-function saveConfig(config) {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+function getGuildConfig(guildId) {
+    const all = loadAllConfigs();
+    return all[guildId] || { applicationChannelId: null, adminChannelId: null, staffRoleId: null };
+}
+
+function saveGuildConfig(guildId, config) {
+    const all = loadAllConfigs();
+    all[guildId] = config;
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(all, null, 2));
 }
 
 const SECTIONS = {
@@ -93,7 +103,8 @@ client.once('clientReady', async () => {
 });
 
 client.on('interactionCreate', async (interaction) => {
-    const config = loadConfig();
+    if (!interaction.guildId) return;
+    const config = getGuildConfig(interaction.guildId);
 
     if (interaction.isChatInputCommand()) {
         await handleCommands(interaction, config);
@@ -123,13 +134,12 @@ async function handleCommands(interaction, config) {
         return interaction.reply({ content: '❌ هذا الأمر للأدمن فقط.', ephemeral: true });
     }
 
-    const { commandName } = interaction;
+    const { commandName, guildId } = interaction;
 
     if (commandName === 'setup-apply') {
         const imagePath = path.join(__dirname, 'apply.jpg');
-
         if (!fs.existsSync(imagePath)) {
-            return interaction.reply({ content: '❌ ملف الصورة `apply.jpg` غير موجود في مجلد البوت.', ephemeral: true });
+            return interaction.reply({ content: '❌ ملف الصورة `apply.jpg` غير موجود.', ephemeral: true });
         }
 
         const attachment = new AttachmentBuilder(imagePath, { name: 'apply.jpg' });
@@ -147,34 +157,47 @@ async function handleCommands(interaction, config) {
 
         await interaction.channel.send({ files: [attachment], components: [row] });
 
-        const newConfig = { ...config, applicationChannelId: interaction.channelId, guildId: interaction.guildId };
-        saveConfig(newConfig);
+        const newConfig = { ...config, applicationChannelId: interaction.channelId };
+        saveGuildConfig(guildId, newConfig);
 
         await interaction.reply({ content: '✅ تم إرسال صورة التقديم مع الخيارات!', ephemeral: true });
     }
 
     else if (commandName === 'setup-admin') {
-        const newConfig = { ...config, adminChannelId: interaction.channelId, guildId: interaction.guildId };
-        saveConfig(newConfig);
+        const newConfig = { ...config, adminChannelId: interaction.channelId };
+        saveGuildConfig(guildId, newConfig);
         await interaction.reply({ content: '✅ تم تعيين هذه القناة كروم الأدمن!', ephemeral: true });
     }
 
     else if (commandName === 'setup-role') {
         const role = interaction.options.getRole('role');
-        const newConfig = { ...config, staffRoleId: role.id, guildId: interaction.guildId };
-        saveConfig(newConfig);
-        await interaction.reply({ content: `✅ تم تعيين رتبة الإداري: **${role.name}**`, ephemeral: true });
+
+        // Check if bot can manage this role
+        const botMember = interaction.guild.members.me;
+        const botHighestRole = botMember.roles.highest;
+
+        if (role.position >= botHighestRole.position) {
+            return interaction.reply({
+                content: `❌ لا أستطيع إعطاء رتبة **${role.name}** لأنها فوق رتبتي أو بنفس مستواها.\n\nالحل: ارفع رتبة البوت في سيرفرك فوق رتبة **${role.name}** من **Server Settings → Roles**.`,
+                ephemeral: true
+            });
+        }
+
+        const newConfig = { ...config, staffRoleId: role.id };
+        saveGuildConfig(guildId, newConfig);
+        await interaction.reply({ content: `✅ تم تعيين رتبة الإداري: **${role.name}**\nسيتم إعطاؤها تلقائياً عند قبول أي تقديم.`, ephemeral: true });
     }
 
     else if (commandName === 'status') {
         const embed = new EmbedBuilder()
-            .setTitle('⚙️ إعدادات البوت الحالية')
+            .setTitle('⚙️ إعدادات البوت - هذا السيرفر')
             .setColor(0x57F287)
             .addFields(
-                { name: 'روم التقديم', value: config.applicationChannelId ? `<#${config.applicationChannelId}>` : '❌ غير مُعيَّن', inline: true },
-                { name: 'روم الأدمن', value: config.adminChannelId ? `<#${config.adminChannelId}>` : '❌ غير مُعيَّن', inline: true },
-                { name: 'رتبة الإداري', value: config.staffRoleId ? `<@&${config.staffRoleId}>` : '❌ غير مُعيَّنة', inline: true }
+                { name: 'روم التقديم', value: config.applicationChannelId ? `<#${config.applicationChannelId}>` : '❌ غير مُعيَّن — شغّل `/setup-apply`', inline: false },
+                { name: 'روم الأدمن', value: config.adminChannelId ? `<#${config.adminChannelId}>` : '❌ غير مُعيَّن — شغّل `/setup-admin`', inline: false },
+                { name: 'رتبة الإداري', value: config.staffRoleId ? `<@&${config.staffRoleId}>` : '❌ غير مُعيَّنة — شغّل `/setup-role`', inline: false }
             )
+            .setFooter({ text: `Guild ID: ${guildId}` })
             .setTimestamp();
         await interaction.reply({ embeds: [embed], ephemeral: true });
     }
@@ -222,7 +245,7 @@ async function handleApplicationSubmit(interaction, section, config) {
                     { name: '👤 المتقدم', value: `${applicant.tag} (${applicant.id})`, inline: true },
                     { name: '📂 القسم', value: SECTIONS[section], inline: true },
                     { name: '📅 التاريخ', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
-                    ...answers.map(a => ({ name: `❓ ${a.question}`, value: a.answer, inline: false }))
+                    ...answers.map(a => ({ name: `❓ ${a.question}`, value: a.answer || '—', inline: false }))
                 )
                 .setFooter({ text: `معرف المتقدم: ${applicant.id}` })
                 .setTimestamp();
@@ -272,8 +295,22 @@ async function handleAdminDecision(interaction, config) {
     const serverName = guild.name;
 
     if (action === 'accept') {
+        // Give role with proper error handling
         if (config.staffRoleId) {
-            await member.roles.add(config.staffRoleId).catch(console.error);
+            const role = guild.roles.cache.get(config.staffRoleId);
+            if (role) {
+                const botMember = guild.members.me;
+                if (role.position < botMember.roles.highest.position) {
+                    await member.roles.add(role).catch(e => console.error('❌ فشل إعطاء الرتبة:', e.message));
+                    console.log(`✅ تم إعطاء رتبة "${role.name}" للعضو ${member.user.tag}`);
+                } else {
+                    console.error(`❌ رتبة "${role.name}" أعلى من رتبة البوت - لا يمكن إعطاؤها`);
+                }
+            } else {
+                console.error(`❌ الرتبة ${config.staffRoleId} غير موجودة في السيرفر`);
+            }
+        } else {
+            console.warn('⚠️ لم يتم تعيين رتبة الإداري - شغّل /setup-role');
         }
 
         const dmEmbed = new EmbedBuilder()
@@ -282,7 +319,9 @@ async function handleAdminDecision(interaction, config) {
             .setDescription(`تهانينا! تم قبولك كإداري في **${serverName}** في قسم **${SECTIONS[section]}**.\n\n📌 **الرجاء التوجه لقوانين الإدارة وقراءتها كاملاً.**\n\nنتمنى لك تجربة رائعة مع الفريق! 💪`)
             .setTimestamp();
 
-        await member.send({ embeds: [dmEmbed] }).catch(() => {});
+        await member.send({ embeds: [dmEmbed] }).catch(() => {
+            console.warn(`⚠️ لم يتم إرسال DM للعضو ${member.user.tag} - ربما أغلق الرسائل الخاصة`);
+        });
 
         const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
             .setColor(0x57F287)
@@ -296,7 +335,9 @@ async function handleAdminDecision(interaction, config) {
             .setDescription(`للأسف، تم رفض تقديمك كإداري في **${serverName}** في قسم **${SECTIONS[section]}**.\n\nشكراً لاهتمامك بالانضمام لفريقنا. يمكنك المحاولة مرة أخرى لاحقاً. 🙏`)
             .setTimestamp();
 
-        await member.send({ embeds: [dmEmbed] }).catch(() => {});
+        await member.send({ embeds: [dmEmbed] }).catch(() => {
+            console.warn(`⚠️ لم يتم إرسال DM للعضو ${member.user.tag} - ربما أغلق الرسائل الخاصة`);
+        });
 
         const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
             .setColor(0xED4245)
