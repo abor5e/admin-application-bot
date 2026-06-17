@@ -149,9 +149,9 @@ async function handleCommands(interaction, config) {
                 .setCustomId('select_section')
                 .setPlaceholder('اختر القسم الذي تريد التقديم فيه...')
                 .addOptions([
-                    { label: 'قسم الإيفنتات', description: 'تنظيم وإدارة الفعاليات', value: 'event', emoji: '🎉' },
-                    { label: 'قسم الدعم', description: 'مساعدة الأعضاء وحل مشاكلهم', value: 'support', emoji: '🛡️' },
-                    { label: 'قسم الألعاب', description: 'تنظيم مسابقات وأنشطة الألعاب', value: 'games', emoji: '🎮' }
+                    { label: 'Events', description: 'تنظيم وإدارة الفعاليات', value: 'event', emoji: '🎉' },
+                    { label: 'Support', description: 'مساعدة الأعضاء وحل مشاكلهم', value: 'support', emoji: '🛡️' },
+                    { label: 'Games', description: 'تنظيم مسابقات وأنشطة الألعاب', value: 'games', emoji: '🎮' }
                 ])
         );
 
