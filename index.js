@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionFlagsBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
@@ -39,35 +39,78 @@ const QUESTIONS = [
     { id: 'experience', label: 'وش خبراتك؟', placeholder: 'اذكر خبراتك المتعلقة بالإدارة...' }
 ];
 
-client.once('clientReady', () => {
+const commands = [
+    new SlashCommandBuilder()
+        .setName('setup-apply')
+        .setDescription('إنشاء embed التقديم في هذه القناة')
+        .setDefaultMemberPermissions(8),
+    new SlashCommandBuilder()
+        .setName('setup-admin')
+        .setDescription('تعيين هذه القناة كروم الأدمن لعرض التقديمات')
+        .setDefaultMemberPermissions(8),
+    new SlashCommandBuilder()
+        .setName('setup-role')
+        .setDescription('تعيين رتبة الإداري التي تُعطى عند القبول')
+        .setDefaultMemberPermissions(8)
+        .addRoleOption(option =>
+            option.setName('role')
+                .setDescription('الرتبة التي ستُعطى للمقبولين')
+                .setRequired(true)
+        ),
+    new SlashCommandBuilder()
+        .setName('status')
+        .setDescription('عرض إعدادات البوت الحالية')
+        .setDefaultMemberPermissions(8),
+];
+
+async function registerCommands() {
+    const token = process.env.DISCORD_TOKEN;
+    const clientId = process.env.CLIENT_ID;
+
+    if (!token || !clientId) {
+        console.error('❌ DISCORD_TOKEN أو CLIENT_ID غير موجود في متغيرات البيئة!');
+        return;
+    }
+
+    try {
+        const rest = new REST({ version: '10' }).setToken(token);
+        console.log('⏳ جاري تسجيل الأوامر...');
+        await rest.put(
+            Routes.applicationCommands(clientId),
+            { body: commands.map(c => c.toJSON()) }
+        );
+        console.log('✅ تم تسجيل الأوامر بنجاح!');
+    } catch (error) {
+        console.error('❌ فشل تسجيل الأوامر:', error.message);
+    }
+}
+
+client.once('clientReady', async () => {
     console.log(`✅ البوت شغال: ${client.user.tag}`);
     client.user.setActivity('تقديمات الإدارة', { type: 0 });
+    await registerCommands();
 });
 
 client.on('interactionCreate', async (interaction) => {
     const config = loadConfig();
 
-    // Slash commands
     if (interaction.isChatInputCommand()) {
         await handleCommands(interaction, config);
         return;
     }
 
-    // Select menu - section selection
     if (interaction.isStringSelectMenu() && interaction.customId === 'select_section') {
         const section = interaction.values[0];
         await showApplicationModal(interaction, section);
         return;
     }
 
-    // Modal submit - application form
     if (interaction.isModalSubmit() && interaction.customId.startsWith('apply_modal_')) {
         const section = interaction.customId.replace('apply_modal_', '');
         await handleApplicationSubmit(interaction, section, config);
         return;
     }
 
-    // Buttons - accept/reject
     if (interaction.isButton()) {
         if (interaction.customId.startsWith('accept_') || interaction.customId.startsWith('reject_')) {
             await handleAdminDecision(interaction, config);
@@ -83,7 +126,6 @@ async function handleCommands(interaction, config) {
     const { commandName } = interaction;
 
     if (commandName === 'setup-apply') {
-        // Post application embed in current channel
         const embed = new EmbedBuilder()
             .setTitle('📋 تقديم لفريق الإدارة')
             .setDescription('مرحباً بك في نظام التقديم لفريق الإدارة!\n\nاختر القسم الذي تريد التقديم فيه من القائمة أدناه، ثم أجب على الأسئلة.')
@@ -108,10 +150,10 @@ async function handleCommands(interaction, config) {
         );
 
         await interaction.channel.send({ embeds: [embed], components: [row] });
-        
+
         const newConfig = { ...config, applicationChannelId: interaction.channelId, guildId: interaction.guildId };
         saveConfig(newConfig);
-        
+
         await interaction.reply({ content: '✅ تم إنشاء روم التقديم في هذه القناة!', ephemeral: true });
     }
 
@@ -173,7 +215,6 @@ async function handleApplicationSubmit(interaction, section, config) {
 
     const applicant = interaction.user;
 
-    // Send to admin channel
     if (config.adminChannelId) {
         const adminChannel = await client.channels.fetch(config.adminChannelId).catch(() => null);
         if (adminChannel) {
@@ -226,21 +267,19 @@ async function handleAdminDecision(interaction, config) {
     const member = await guild.members.fetch(userId).catch(() => null);
 
     if (!member) {
-        const failEmbed = new EmbedBuilder()
+        const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
             .setColor(0xED4245)
-            .setDescription('❌ لم يتم العثور على العضو، ربما غادر السيرفر.');
-        return interaction.editReply({ embeds: [interaction.message.embeds[0], failEmbed], components: [] });
+            .setFooter({ text: '❌ العضو غادر السيرفر' });
+        return interaction.message.edit({ embeds: [updatedEmbed], components: [] });
     }
 
     const serverName = guild.name;
 
     if (action === 'accept') {
-        // Give role
         if (config.staffRoleId) {
             await member.roles.add(config.staffRoleId).catch(console.error);
         }
 
-        // DM the user
         const dmEmbed = new EmbedBuilder()
             .setTitle('🎉 تم قبولك في فريق الإدارة!')
             .setColor(0x57F287)
@@ -249,7 +288,6 @@ async function handleAdminDecision(interaction, config) {
 
         await member.send({ embeds: [dmEmbed] }).catch(() => {});
 
-        // Update admin embed
         const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
             .setColor(0x57F287)
             .setFooter({ text: `✅ تم القبول بواسطة ${interaction.user.tag}` });
@@ -257,7 +295,6 @@ async function handleAdminDecision(interaction, config) {
         await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
 
     } else if (action === 'reject') {
-        // DM the user
         const dmEmbed = new EmbedBuilder()
             .setTitle('❌ نتائج تقديمك لفريق الإدارة')
             .setColor(0xED4245)
@@ -266,7 +303,6 @@ async function handleAdminDecision(interaction, config) {
 
         await member.send({ embeds: [dmEmbed] }).catch(() => {});
 
-        // Update admin embed
         const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
             .setColor(0xED4245)
             .setFooter({ text: `❌ تم الرفض بواسطة ${interaction.user.tag}` });
