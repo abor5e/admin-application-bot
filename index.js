@@ -39,7 +39,7 @@ const QUESTIONS = [
     { id: 'experience', label: 'وش خبراتك؟', placeholder: 'اذكر خبراتك المتعلقة بالإدارة...' }
 ];
 
-client.once('ready', () => {
+client.once('clientReady', () => {
     console.log(`✅ البوت شغال: ${client.user.tag}`);
     client.user.setActivity('تقديمات الإدارة', { type: 0 });
 });
